@@ -1,0 +1,108 @@
+---
+- hosts: "{{ _hostname }}"
+  remote_user: ansible
+  become: yes
+  become_user: root
+  gather_facts: yes
+  vars:
+    start_date: "{{ _start_date }}"
+    end_date: "{{ _end_date }}"
+    isodate: .000Z
+  tasks:
+
+    - name: Find and delete csv file
+      find:
+        paths: /tmp
+        patterns: "*.csv"
+      register: delete_csv
+
+    - name: Remove csv file in tmp
+      file:
+        path: "{{item.path}}"
+        state: absent
+      with_items: "{{delete_csv.files}}"
+
+    - name: Check if folder exists
+      stat:
+        path: /tmp/Mongo_log
+      register: folder_check
+
+    - name: Create folder if it does not exist
+      file:
+        path: /tmp/Mongo_log
+        state: directory
+      when: not folder_check.stat.exists
+
+    - name: Split Start Date
+      set_fact:
+        start_date_list: "{{ start_date.split(' ') }}"
+
+    - name: Add T to start date
+      set_fact:
+        start_date_t: "{{ start_date_list | join('T') }}"
+    - debug:
+        msg: "{{ start_date_t }}"
+
+    - name: Concatenate start date
+      set_fact:
+        start_date_c: "{{ start_date_t }}{{ isodate }}"
+    - debug:
+        msg: "{{ start_date_c }}"
+
+    - name: Split End Date
+      set_fact:
+        end_date_list: "{{ end_date.split(' ') }}"
+
+    - name: Add T to end date
+      set_fact:
+        end_date_t: "{{ end_date_list | join('T') }}"
+
+    - name: Concatenate end date
+      set_fact:
+        end_date_c: "{{ end_date_t }}{{ isodate }}"
+
+    - name: Display ISO date string
+      debug:
+        msg: "{{ start_date_c }} and {{ end_date_c }}"
+
+    - name: Check Data from mongoDB
+      shell: "mongoexport --host=\"localhost\" --port=\"27017\"
+        --username=\"root\"  --authenticationDatabase=admin
+        --collection=\"AUDIT\" --db=\"PM_AUDIT\" -q='{ \"requestDtsCal\": {
+        \"$gte\": { \"$date\":\"{{ start_date_c }}\" }, \"$lte\": { \"$date\":
+        \"{{ end_date_c }}\" } } }' --fields
+        statusCode,organizationKey,serviceId --out=/tmp/$(date
+        -I)_mongoexported.csv -p '!QAZ2wsx' "
+
+    - name: Data Count
+      shell: "grep -v deployment /tmp/$(date -I)_mongoexported.csv | cut -f4,3,2 -d ,
+        | cut -d':' -f1,2,7,8 | cut -d '}' -f1 | sort | uniq -c >>
+        /tmp/$(date  +\"%d-%m-%Y_%H-%M-%S\")_report.csv "
+      register: cut
+    - debug: var=cut.stdout_lines
+
+    - name: ssh to ansible tower(dnt del) need to modify
+      host:
+        path: /tmp/".csv"
+        file_type: file
+        patterns: "*.csv"
+
+    - name: Call Python script
+      command: python3 /tmp/script.py
+    - name: SSH Command
+      hosts: localhost
+      gather_facts: no
+      tasks:
+
+    - name: Run command on ansible server using SSH
+      command: echo "Hello World"
+      delegate_to: localhost
+      become: yes
+      become_user: root
+      remote_user: user
+      vars:
+        ansible_ssh_private_key_file: /path/to/private/key
+
+    - name: Completion Message
+      debug:
+        msg: Enjoy..!
