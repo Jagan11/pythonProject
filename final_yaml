@@ -1,0 +1,145 @@
+---
+- hosts: localhost
+  gather_facts: false
+
+  vars:
+    start_date: "{{ _start_date }}"
+    end_date: "{{ _end_date }}"
+    isodate: .000Z
+    dir_path: /mongoexport
+    dir_path2: /mongoexport/
+    dir_script: /mongoexport/static_files
+    gateway: "{{ _gateway | lower }}"
+    _thosts: "{{ gateway }}-mongo3i1.dc.mgmt"
+    tenant_name: "{{ _tenant_name | lower }}"
+    extra_var: "-"
+
+  tasks:
+    - fail: msg="You can run for GW0 to GW5 only...!"
+      when: gateway not in ['gw0', 'gw1', 'gw2', 'gw3', 'gw4','gw5']
+
+    - name: change tenant name for pvt
+      set_fact:
+        ftenant_name: "{{ tenant_name if not tenant_name.endswith('pvt') else tenant_name[:-3] + extra_var + tenant_name[-3:] }}"
+
+    - debug:
+       var: ftenant_name
+
+    # - name: check tenant name for pvt
+    #   set_fact:
+    #     ptenant_name: "{{ tenant_name if  endswith('--pvt') }}"
+    # - debug:
+    #     var: ptenant_name
+
+    # - name: Check if folder exists
+    #   stat:
+    #     path: /mongoexport/Mongo_log
+    #   register: folder_check
+
+    # - name: Create folder if it does not exist
+    #   file:
+    #     path: /mongoexport/Mongo_log
+    #     state: directory
+    #   when: not folder_check.stat.exists
+
+    - name: Remove extra character from string
+      set_fact:
+       my_string: "{{ ftenant_name | replace('--', '-') }}"
+    - debug:
+        var: my_string
+
+    - name: Find csv files from directory
+      find:
+        paths: "{{ dir_path }}"
+        patterns: "*.csv"
+      delegate_to: localhost
+      register: delete_csv
+
+    - name: Remove csv file from directory
+      file:
+        path: "{{item.path}}"
+        state: absent
+      delegate_to: localhost
+      with_items: "{{delete_csv.files}}"
+
+    - name: Split Start Date
+      set_fact:
+        start_date_list: "{{ start_date.split(' ') }}"
+
+    - name: Add T to start date
+      set_fact:
+        start_date_t: "{{ start_date_list | join('T') }}"
+
+    - debug:
+        msg: "{{ start_date_t }}"
+
+    - name: Concatenate start date
+      set_fact:
+        start_date_c: "{{ start_date_t }}{{ isodate }}"
+    - debug:
+        msg: "{{ start_date_c }}"
+
+    - name: Split End Date
+      set_fact:
+        end_date_list: "{{ end_date.split(' ') }}"
+
+    - name: Add T to end date
+      set_fact:
+        end_date_t: "{{ end_date_list | join('T') }}"
+
+    - name: Concatenate end date
+      set_fact:
+        end_date_c: "{{ end_date_t }}{{ isodate }}"
+
+    - name: Display ISO date string
+      debug:
+        msg: "{{ start_date_c }} and {{ end_date_c }}"
+
+    - name: Check Data from mongoDB with gateway name
+      shell: "mongoexport --host=\"{{ _thosts }}\" --port=\"27017\"
+        --username=\"root\"  --authenticationDatabase=admin
+        --collection=\"AUDIT\" --db=\"PM_AUDIT\" -q='{ \"requestDtsCal\": {
+        \"$gte\": { \"$date\":\"{{ start_date_c }}\" }, \"$lte\": { \"$date\":
+        \"{{ end_date_c }}\" } } }' --fields
+        statusCode,organizationKey,serviceId --out=\"{{ dir_path }}\"/$(date
+        -I)_mongoexported.csv -p '!QAZ2wsx' "
+      delegate_to: localhost
+      when: tenant_name | length == 0
+
+    - name: Check Data from mongoDB with tenant name
+      shell: "mongoexport --host=\"{{ _thosts }}\" --port=\"27017\"
+        --username=\"root\"  --authenticationDatabase=admin
+        --collection=\"AUDIT\" --db=\"PM_AUDIT\" -q='{ \"requestDtsCal\": {
+        \"$gte\": { \"$date\":\"{{ start_date_c }}\" }, \"$lte\": { \"$date\":
+        \"{{ end_date_c }}\" } }, \"organizationKey\": { \"$regex\": \"{{ my_string }}$\" }}' --fields
+        statusCode,organizationKey,serviceId --out=\"{{ dir_path }}\"/$(date
+        -I)_mongoexported.csv -p '!QAZ2wsx' "
+      delegate_to: localhost
+      when: ftenant_name | length != 0
+
+    - name: set date
+      shell: "date  +%d-%m-%Y_%H-%M-%S"
+      register: systime
+
+    - name: set file name
+      set_fact:
+        file_report: "{{ dir_path2 }}{{ systime.stdout }}.csv"
+
+    - name : data count
+      shell: "grep -v deployment \"{{ dir_path }}\"/$(date -I)_mongoexported.csv | cut -f4,3,2 -d ,
+        | cut -d':' -f1,2,7,8 | cut -d '}' -f1 | sort | uniq -c >>
+        \"{{ file_report }}\""
+      delegate_to: localhost
+      register: cut
+
+    - name: Call Python script
+      environment:
+        PYTHONPATH: /var/lib/awx/.local/lib/python3.6/site-packages/
+      shell: python3.6 "{{ dir_script }}"/main.py "{{ file_report }}"
+      register: output_final
+
+    - debug: var=output_final.stdout_lines
+
+    - name: Completion Message
+      debug:
+        msg: Magilchi..!!!!
