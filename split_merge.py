@@ -71,7 +71,7 @@ df = pd.DataFrame(list(guidlist), columns=['tenant', 'API Name', 'statuscode', '
 
 # get your desired output
 df.to_csv('/Users/jd/Downloads/' + str(now) + '.csv')
-#print(df)
+print(df)
 
 
 # get your desired output
